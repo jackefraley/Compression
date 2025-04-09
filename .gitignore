@@ -1,0 +1,16 @@
+# macOS-specific
+.DS_Store
+
+# External libraries
+kissfft/
+
+# Compiled outputs (optional, clean builds)
+*.o
+*.out
+*.exe
+*.wav
+*.csv
+*.png
+
+# Other common ignores
+build/
