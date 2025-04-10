@@ -4,6 +4,8 @@
 # External libraries
 kissfft/
 
+samples/
+
 # Compiled outputs (optional, clean builds)
 *.o
 *.out
