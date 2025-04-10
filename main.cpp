@@ -4,144 +4,44 @@
 #include <cmath>
 #include <fstream>
 
-#include "kissfft/kiss_fft.h"
+#include "compressor.h"
 
-
-/*
-* Funtion: LowPass
-* Desc: Removes all frequency components above 9Khz to allow for lower sample rate
-*/
-void lowPass(std::vector<kiss_fft_cpx>& out, int sampleRate){
-    int resolution = static_cast<float>(sampleRate / 1024);
-    float cutoffFreq = 9000.0f;
-    int cutoffBin = static_cast<int>(cutoffFreq / resolution);
-
-    for(int i = cutoffBin; i < 512; i++){
-        out[i].r = 0.0f;
-        out[i].i = 0.0f;
-    }
-}
-
-/*
-* Function: IFFT
-* Desc: Takes the inverse laplace transform to reproduce time domain signal
-*/
-std::vector<float> IFFT(const std::vector<kiss_fft_cpx>& fft){
-    const int N = 1024;
-
-    std::vector<kiss_fft_cpx> in(N);
-    std::vector<float> timeDomain(N);
-
-    kiss_fft_cfg ifftCfg = kiss_fft_alloc(N, 1, NULL, NULL);
-
-    kiss_fft(ifftCfg, fft.data(), in.data());
-
-    for(int i = 0; i < N; i++){
-        timeDomain[i] = in[i].r / N;
-    }
-
-    free(ifftCfg);
-
-    return timeDomain;
-}
-
-/*
-* Function: FFT
-* Desc: Takes the fourier transform to turn time domain signal into its frequency components
-*/
-std::vector<kiss_fft_cpx> FFT(const std::vector<float>& samples){
-    const int N = 1024;
-    kiss_fft_cfg cfg = kiss_fft_alloc(N, 0, NULL, NULL);
-
-    std::vector<kiss_fft_cpx> in(N);
-    std::vector<kiss_fft_cpx> out(N);
-
-    for(int i = 0; i < N; i++){
-        in[i].r = ( i < samples.size() ? samples[i] : 0);
-        in[i].i = 0.0f;
-    }
-
-    kiss_fft(cfg, in.data(), out.data());
-
-    free(cfg);
-
-    return out;
-}
-
-/*
-* Function: Interpolate
-* Desc: If the derivative of the incoming signal is less than 1e-5 this averages it with the 
-* samples before and after it to smooth out small changes which are unimportant
-*/
-std::vector<float> interpolate(std::vector<float> samples, std::vector<float> derivative){
-    std::vector<float> interpolatedSamples(samples.size());
-    interpolatedSamples = samples;
-    for(int i = 1; i < derivative.size(); i++){
-        if(derivative[i] < 1e-5f){
-            interpolatedSamples[i] = 0.5f * samples[i - 1] + samples[i + 1];
-        }
-    }
-    return interpolatedSamples;
-}
-
-/*
-* Function: DerivativeFunction
-* Desc: Finds the finite difference approximation derivative of a signal 
-* using the simple formula d[i] = s[i] - s[i-1]
-*/
-std::vector<float> derivativeFunction(std::vector<float> samples){
-    std::vector<float> derivative(samples.size() - 1);
-    for(int i = 1; i < samples.size(); i++){
-        derivative[i] = samples[i] - samples[i - 1];
-    }
-    return derivative;
-}
-
-/*
-* Function: MonoFunction
-* Desc: Averages out the left and right channels of a signal to simplify processing
-*/
-std::vector<float> monoFunction(int frames, std::vector<float> samples){
-    std::vector<float> mono(frames);
-    for(int i = 0; i < frames; i++){
-        mono[i] = 0.5f * (samples[i * 2] + samples[i * 2 + 1]);
-    }
-    std::cout << samples.size() << " samples converted to " << mono.size() << " single channel samples. \n";
-    return mono;
-}
-
-/*
-* Func: RemoveLeadingZeros
-* Desc: Removes all leading zeros from the audio to make it start sooner
-*/
-void removeLeadingZeros(std::vector<float>& samples){
-    int startIndex = 0;
-    for(int i = 0; i < samples.size(); i++){
-        if(std::abs(samples[i]) > 1e-5f){
-            startIndex = i;
-            break;
-        } 
-    }
-    samples.erase(samples.begin(), samples.begin() + startIndex);
-}
-
-/*
-* Func: ExportCSV
-* Desc: Exports CSV files to be read, graphed and analyzed
-*/
-void exportCSV(const std::string& filename, const std::vector<float>& data, size_t maxSamples = 10000) {
-    std::ofstream file(filename);
-    size_t count = std::min(maxSamples, data.size());
-
-    for (size_t i = 0; i < count; ++i) {
-        file << data[i] << "\n";
-    }
-
-    file.close();
-}
 
 int main() {
-    const char* sourceFile = "samples/ethereal-vistas.wav";
+
+    float frequencyCutoff = 0;
+    int skipFactor = 0;
+
+    while(true){
+        std::cout << "Enter compression quality:\n(1 for 92% reduction, 2 for 83% reduction, 3 for 66% reduction and 4 for 50% reduction)\n";
+        int userInput = 0;
+
+        std::cin >> userInput;
+
+        if(userInput < 1 || userInput > 4){
+            std::cerr << "Enter a valid number\n";
+        } else if(userInput == 1){
+            frequencyCutoff = 1320.0f;
+            skipFactor = 14;
+            break;
+        } else if(userInput == 2){
+            frequencyCutoff = 4000.0f;
+            skipFactor = 6;
+            break;
+        } else if(userInput == 3){
+            frequencyCutoff = 7920.0f;
+            skipFactor = 3;
+            break;
+        } else if(userInput == 4){
+            frequencyCutoff = 9000.0f;
+            skipFactor = 2;
+            break;
+        }
+    }
+
+    const int N = 2048;
+
+    const char* sourceFile = "samples/macMiller.wav";
     SF_INFO sfInfo;
     SNDFILE* file = sf_open(sourceFile, SFM_READ, &sfInfo);
 
@@ -172,6 +72,7 @@ int main() {
     std::cout << "Frames: " << frames << "\n";
 
     std::vector<float> rawSamples(channels * frames);
+    int preMonoSize = rawSamples.size();
     sf_read_float(file, rawSamples.data(), rawSamples.size());
 
     if(channels > 1){
@@ -181,45 +82,76 @@ int main() {
 
     removeLeadingZeros(rawSamples);
 
-    std::vector<float> derivative = derivativeFunction(rawSamples);
+    std::vector<float> compressedAudio(rawSamples.size(), 0.0f);
 
-    std::vector<float> interpolatedSamples = interpolate(rawSamples, derivative);
+    std::vector<float> window(N);
 
-    std::vector<float> compressedAudio;
-
-    for(int i = 0; i < interpolatedSamples.size(); i += 1024){
-        std::vector<float> block(1024, 0.0f);
-        for(int j = 0; j < 1024 && (i + j) < interpolatedSamples.size(); j++){
-            block[j] = interpolatedSamples[i + j];
-        }
-
-        std::vector<kiss_fft_cpx> FFTOut = FFT(block);
-        lowPass(FFTOut, sampleRate);
-        std::vector<float> filteredBlock = IFFT(FFTOut);
-
-        compressedAudio.insert(compressedAudio.end(), filteredBlock.begin(), filteredBlock.end());
+    // Create Hann window
+    for (int i = 0; i < N; ++i) {
+        window[i] = 0.5f * (1 - cos(2 * M_PI * i / (N - 1)));
     }
 
+    int totalBefore = 0;
+    int totalAfter = 0;
+
+    // For each 1024 chunk, increment by 512
+    for(int i = 0; i + N <= rawSamples.size(); i += (N/2)){
+        // Create a block
+        std::vector<float> block(N);
+        // Apply Hann window to each block
+        for(int j = 0; j < N; j++){
+            block[j] = rawSamples[i + j] * window[j];
+        }
+
+        // Use the FFT to remove higher less important frequencies
+        std::vector<kiss_fft_cpx> FFTOut = FFT(block);
+        totalBefore += countNonZeroBins(FFTOut);
+        keepTopFreq(FFTOut);
+        totalAfter += countNonZeroBins(FFTOut);
+        lowPass(FFTOut, sampleRate, frequencyCutoff);
+        std::vector<float> filteredBlock = IFFT(FFTOut);
+
+        // Add the filtered block to the audio output
+        for(int j = 0; j < N; j++){
+            compressedAudio[j + i] += filteredBlock[j];
+        }
+    }
+
+    std::cout << "Non zero bins before: " << totalBefore << " converted to " << totalAfter << " non zero bins.\n";
+
+    // File for downsizing
     std::vector<float> downsampled;
 
-    for(int i = 0; i < compressedAudio.size(); i += 2){
+    // Downsample by skipping every other sample, fft cuts out high frequencies to prevent aliasing
+    for(int i = 0; i < compressedAudio.size(); i += skipFactor){
         downsampled.push_back(compressedAudio[i]);
     }
 
+    float percentageReduction = (1 - ( static_cast<float>(downsampled.size()) / static_cast<float>(rawSamples.size()))) * 100;
+
+    std::cout << rawSamples.size() << " samples downsampled to " << downsampled.size() << " samples that is a " << percentageReduction << "% reduction in size!\n";
+
+    if(channels > 1){
+        percentageReduction = (1 - ( static_cast<float>(downsampled.size()) / static_cast<float>(preMonoSize))) * 100;
+        std::cout << "Or " << preMonoSize << " multi channel samples downsampled to " << downsampled.size() << " samples that is a " << percentageReduction << "% reduction in size!\n";
+    }
+
+    normalizeAudio(downsampled);
+
+
     SF_INFO outInfo = sfInfo;
-    outInfo.samplerate = sampleRate/2;
+    outInfo.samplerate = sampleRate/skipFactor;
     outInfo.channels = 1;
     outInfo.format = SF_FORMAT_WAV | SF_FORMAT_PCM_16;
 
-    SNDFILE* outFile = sf_open("compressed_audio_9k_cutoff.wav", SFM_WRITE, &outInfo);
+
+    SNDFILE* outFile = sf_open("output/downsampled_mac.wav", SFM_WRITE, &outInfo);
     sf_write_float(outFile, downsampled.data(), downsampled.size());
 
     sf_close(outFile);
     sf_close(file);
 
     exportCSV("original.csv", rawSamples);
-    exportCSV("interpolated.csv", interpolatedSamples);
-    exportCSV("derivative.csv", derivative);
     exportCSV("compressed.csv", compressedAudio);
 
     return 0;
